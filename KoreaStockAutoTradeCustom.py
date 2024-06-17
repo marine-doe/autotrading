@@ -49,6 +49,38 @@ def hashkey(datas):
     hashkey = res.json()["HASH"]
     return hashkey
 
+def get_daily_price_avg(code):
+    """국내주식 기간별 시세 평균(5일, 20일)"""
+    """7일 중 5일만 주식거래가 활성화된다. 20일 종가 평균을 내려면 28일의 기간을 잡아야한다."""
+    PATH = "uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+    URL = f"{URL_BASE}/{PATH}"
+    headers = {"Content-Type": "application/json",
+               "authorization": f"Bearer {ACCESS_TOKEN}",
+               "appKey": APP_KEY,
+               "appSecret": APP_SECRET,
+               "tr_id": "FHKST03010100"}
+    now = datetime.datetime.now()
+    yesterday = now - datetime.timedelta(days=1)
+    date_to = yesterday.strftime("%Y%m%d")
+    date_from = (yesterday - datetime.timedelta(days=28)).strftime("%Y%m%d")
+    params = {
+        "fid_cond_mrkt_div_code": "J",
+        "fid_input_iscd": code,
+        "fid_input_date_1": date_from,
+        "fid_input_date_2": date_to,
+        "fid_org_adj_prc": "0",
+        "fid_period_div_code": "D"
+    }
+    res = requests.get(URL, headers=headers, params=params)
+    response_list = res.json()['output2']
+    five_days_avg = 0
+    twenty_days_avg = 0
+    for response in response_list:
+        cur_end_price = int(response['stck_clpr'])
+        twenty_days_avg += cur_end_price
+        if (datetime.datetime.strptime(date_to, "%Y%m%d") - datetime.datetime.strptime(response['stck_bsop_date'], "%Y%m%d")) <= datetime.timedelta(days=6):
+            five_days_avg += cur_end_price
+    return five_days_avg / 5, twenty_days_avg / 20
 
 def get_current_price(code):
     """현재가 조회"""
@@ -221,7 +253,11 @@ def sell(code, qty="1"):
 # 자동매매 시작
 try:
     ACCESS_TOKEN = get_access_token()
-    symbol_list = {"005930": "삼성전자", "000660": "SK하이닉스", "005380": "현대차"}  # 매수 희망 종목 리스트
+    symbol_list = {
+        "005930": "삼성전자",
+        "000660": "SK하이닉스",
+        "005380": "현대차",
+    }  # 매수 희망 종목 리스트
     bought_list = []  # 매수 완료된 종목 리스트
     total_cash = get_balance()  # 보유 현금 조회
     stock_dict = get_stock_balance()  # 보유 주식 조회
@@ -242,6 +278,17 @@ try:
         message += f"{stock} : {price},\n"
     if message.endswith(",\n"):
         message = message[:-2]
+    send_message(message)
+
+    predict = {}
+    for key in symbol_list.keys():
+        five_days, twenty_days = get_daily_price_avg(key)
+        predict[symbol_list[key]] = [five_days, twenty_days]
+    message = "관심종목 종가 평균가\n"
+    for stock, avg in predict.items():
+        message += f"{stock} : {avg[0]}, {avg[1]}\n"
+    if message.endswith(",\n"):
+        message = message[:-1]
     send_message(message)
 
     send_message("===국내 주식 자동매매 프로그램을 시작합니다===")
